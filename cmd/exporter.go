@@ -40,9 +40,18 @@ func CreateExportCommand() (*cobra.Command, error) {
 	var sslCertLocation string
 	var sslKeyLocation string
 	var enableAutoOffsetStore bool
+	var valueFormat string
 
 	command := cobra.Command{
 		Use: "export",
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			switch valueFormat {
+			case valueFormatString, valueFormatBytes:
+				return nil
+			default:
+				return errors.Errorf("--value-format must be either %q or %q, got %q", valueFormatString, valueFormatBytes, valueFormat)
+			}
+		},
 		Run: func(cmd *cobra.Command, args []string) {
 			log.Infof("Limit: %d - Concurrent consumers: %d", exportLimitPerFile, concurrentConsumers)
 			kafkaConsumerConfig := kafka_utils.Config{
@@ -91,7 +100,7 @@ func CreateExportCommand() (*cobra.Command, error) {
 						if err != nil {
 							panic(errors.Wrap(err, "[NewLocalFileWriter]"))
 						}
-						parquetWriter, err := impl.NewParquetWriter(*fileWriter)
+						parquetWriter, err := impl.NewParquetWriter(*fileWriter, valueFormat == valueFormatBytes)
 						if err != nil {
 							panic(errors.Wrap(err, "Unable to init parquet file writer"))
 						}
@@ -137,14 +146,24 @@ func CreateExportCommand() (*cobra.Command, error) {
 	command.Flags().Int64Var(&queuedMaxMessagesKbytes, "queued-max-messages-kbytes", 128000, "Maximum number of kilobytes per topic+partition in the local consumer queue. This value may be overshot by fetch.message.max.bytes")
 	command.Flags().Int64Var(&fetchMessageMaxBytes, "fetch-message-max-bytes", 1048576, "Maximum number of bytes per topic+partition to request when fetching messages from the broker.")
 	topics = command.Flags().StringArray("kafka-topics", nil, "Kafka topics")
+	command.Flags().StringVar(&valueFormat, "value-format", "", fmt.Sprintf("Logical type of the Parquet 'value' column (required): %q for UTF8 text/JSON topics, %q for binary payloads such as protobuf/avro", valueFormatString, valueFormatBytes))
 	command.MarkFlagsRequiredTogether("kafka-username", "kafka-password", "kafka-sasl-mechanism", "kafka-security-protocol")
 	command.MarkFlagsRequiredTogether("google-credentials", "gcs-bucket", "gcs-project-id")
 	err := command.MarkFlagRequired("file")
 	if err != nil {
 		return nil, err
 	}
+	err = command.MarkFlagRequired("value-format")
+	if err != nil {
+		return nil, err
+	}
 	return &command, nil
 }
+
+const (
+	valueFormatString = "string"
+	valueFormatBytes  = "bytes"
+)
 
 type Storage string
 
