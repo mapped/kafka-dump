@@ -8,6 +8,56 @@ It helps you reduce the cost of storing the data that you don't need to use righ
 
 In other words, this tool is used to back up and restore `Cold data` for Kafka topics.
 
+## Build from source (Ubuntu / Linux)
+
+This tool depends on [`confluent-kafka-go`](https://github.com/confluentinc/confluent-kafka-go), which is a cgo binding around `librdkafka`. Building therefore requires a C toolchain, and `CGO_ENABLED` must be on (it is on by default).
+
+### Prerequisites
+
+```shell
+# Go 1.18+ (https://go.dev/dl/). On Ubuntu you can also use the snap:
+sudo snap install go --classic
+
+# C toolchain + librdkafka development headers
+sudo apt-get update
+sudo apt-get install -y build-essential pkg-config librdkafka-dev git
+```
+
+### Clone and build
+
+```shell
+git clone https://github.com/mapped/kafka-dump.git
+cd kafka-dump
+go build -o kafka-dump .
+```
+
+This produces a `kafka-dump` binary in the current directory. Verify it:
+
+```shell
+./kafka-dump --help
+./kafka-dump export --help
+```
+
+> If `go build` fails with a linker error about `librdkafka` on a non-amd64 host (e.g. arm64), make sure `librdkafka-dev` is installed and build with the dynamic tag: `go build -tags dynamic -o kafka-dump .`
+
+### Run
+
+Invoke the binary directly (all the flags below are documented under [Use command line](#use-command-line)). For example, exporting a protobuf topic to a Parquet file with the value column stored as binary:
+
+```shell
+./kafka-dump export \
+--storage=file \
+--file=/path/to/output/data.parquet \
+--value-format=bytes \
+--kafka-topics=my-protobuf-topic \
+--kafka-group-id=kafka-dump.local \
+--kafka-servers=localhost:9092 \
+--kafka-username=admin \
+--kafka-password=admin \
+--kafka-security-protocol=SASL_SSL \
+--kafka-sasl-mechanism=PLAIN
+```
+
 ## Use command line
 ### Install
 ```shell
@@ -45,10 +95,18 @@ Flags:
       --ssl-key-location string                   path to ssl private key
       --ssl-key-password string                   password for ssl private key passphrase
       --storage string                            Storage type: local file (file) or Google cloud storage (gcs) (default "file")
+      --value-format string                       Logical type of the Parquet 'value' column (required): "string" for UTF8 text/JSON topics, "bytes" for binary payloads such as protobuf/avro
 
 Global Flags:
       --log-level string   Log level (default "info")
 ```
+
+> **`--value-format` (required):** Kafka message values are written to a single Parquet `value` column, and a Parquet column has one type for the whole file — so you must declare how the payload should be typed:
+> - `--value-format=string` — annotates the column as UTF8 (STRING). Use for text/JSON topics that you want to query as strings.
+> - `--value-format=bytes` — writes a raw binary `BYTE_ARRAY` (surfaces as BINARY/BLOB/VARBINARY in DuckDB, Athena, Trino, Spark). Use for binary payloads such as **protobuf** or **avro**. Choosing `string` for binary data leaves it annotated as UTF8, which query engines will mangle as invalid UTF-8.
+>
+> The physical bytes stored are identical either way; only the column's logical type differs, so `import` round-trips correctly regardless of the format used at export.
+
 #### Sample
 
 - Connect to Kafka cluster without the SSL encryption being enabled for exporting the data.
@@ -56,6 +114,7 @@ Global Flags:
 kafka-dump export \
 --storage=file
 --file=path/to/output/data.parquet \
+--value-format=string \
 --kafka-topics=users-activities \
 --kafka-group-id=id=kafka-dump.local \
 --kafka-servers=localhost:9092 \
@@ -65,11 +124,12 @@ kafka-dump export \
 --kafka-sasl-mechanism=PLAIN
 ```
 
-- Connect to Kafka cluster with the SSL encryption being enabled for exporting the data.
+- Connect to Kafka cluster with the SSL encryption being enabled for exporting the data (using `--value-format=bytes` for a binary/protobuf topic).
 ```shell
 kafka-dump export \
 --storage=file
 --file=path/to/output/data.parquet \
+--value-format=bytes \
 --kafka-topics=users-activities \
 --kafka-group-id=id=kafka-dump.local \
 --kafka-servers=localhost:9092 \
